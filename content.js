@@ -120,8 +120,9 @@
     allParagraphs.forEach(p => {
       const text = p.textContent.trim();
 
-      if (text === 'Current session' || text === 'All models') {
+      if (text === 'Current session' || text === 'All models' || text === 'Sonnet only') {
         const isSession = text === 'Current session';
+        const isWeekly = text === 'All models' || text === 'Sonnet only';
 
         // Find the parent container (the flex row)
         const rowContainer = p.closest('.w-full.flex.flex-row');
@@ -150,7 +151,7 @@
         if (remainingMinutes === null) return;
 
         const { percent, elapsedMinutes } = calculateTimeElapsed(remainingMinutes, totalWindowMinutes);
-        const timeBar = createTimeBar(percent, elapsedMinutes, !isSession);
+        const timeBar = createTimeBar(percent, elapsedMinutes, isWeekly);
 
         // Insert after the row container
         rowContainer.parentNode.insertBefore(timeBar, rowContainer.nextSibling);

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Background circle in Claude's warm coral/orange - fills most of the canvas -->
+  <circle cx="64" cy="64" r="62" fill="#D97757"/>
+
+  <!-- Clock face - lighter inner circle, larger -->
+  <circle cx="64" cy="64" r="48" fill="#F5E6E0"/>
+
+  <!-- Clock hands in Claude's coral -->
+  <!-- Hour hand - pointing up -->
+  <line x1="64" y1="64" x2="64" y2="30" stroke="#D97757" stroke-width="7" stroke-linecap="round"/>
+  <!-- Minute hand - pointing right -->
+  <line x1="64" y1="64" x2="94" y2="64" stroke="#D97757" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- Center dot -->
+  <circle cx="64" cy="64" r="6" fill="#D97757"/>
+
+  <!-- Hour markers (simplified, Claude-style minimal) -->
+  <circle cx="64" cy="24" r="4" fill="#D97757"/>
+  <circle cx="104" cy="64" r="4" fill="#D97757"/>
+  <circle cx="64" cy="104" r="4" fill="#D97757"/>
+  <circle cx="24" cy="64" r="4" fill="#D97757"/>
+</svg>

@@ -159,31 +159,91 @@
     });
   }
 
-  // Initialize with MutationObserver for SPA navigation
+  // Store last known reset times to detect changes
+  let lastResetTimes = {};
+
+  // Get current reset times from the page
+  function getCurrentResetTimes() {
+    const resetTimes = {};
+    const allParagraphs = document.querySelectorAll('p');
+
+    allParagraphs.forEach(p => {
+      const text = p.textContent.trim();
+
+      if (text === 'Current session' || text === 'All models' || text === 'Sonnet only') {
+        const labelContainer = p.closest('.flex.flex-col');
+        if (!labelContainer) return;
+
+        const resetTextEl = labelContainer.querySelector('p.text-text-400');
+        if (!resetTextEl) return;
+
+        resetTimes[text] = resetTextEl.textContent.trim();
+      }
+    });
+
+    return resetTimes;
+  }
+
+  // Check if reset times have changed
+  function haveResetTimesChanged() {
+    const currentTimes = getCurrentResetTimes();
+    const keys = Object.keys(currentTimes);
+
+    if (keys.length === 0) return false;
+
+    for (const key of keys) {
+      if (lastResetTimes[key] !== currentTimes[key]) {
+        lastResetTimes = currentTimes;
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Initialize with MutationObserver for SPA navigation and usage refresh
   function init() {
     // Initial injection attempt
     injectTimeBars();
+    lastResetTimes = getCurrentResetTimes();
 
     // Set up periodic updates
     if (updateIntervalId) clearInterval(updateIntervalId);
     updateIntervalId = setInterval(injectTimeBars, UPDATE_INTERVAL_MS);
 
-    // Watch for DOM changes (SPA navigation)
-    const observer = new MutationObserver((mutations) => {
-      // Check if we're on the usage page and bars exist
-      if (window.location.pathname === '/settings/usage') {
-        const hasExistingTimeBars = document.querySelector('.claude-ext-time-bar');
-        const hasUsageBars = document.querySelector('p.text-text-100');
+    // Debounce timer for mutation observer
+    let debounceTimer = null;
 
-        if (!hasExistingTimeBars && hasUsageBars) {
+    // Watch for DOM changes (SPA navigation and usage data updates)
+    const observer = new MutationObserver((mutations) => {
+      // Check if we're on the usage page
+      if (window.location.pathname !== '/settings/usage') return;
+
+      const hasUsageBars = document.querySelector('p.text-text-100');
+      if (!hasUsageBars) return;
+
+      const hasExistingTimeBars = document.querySelector('.claude-ext-time-bar');
+
+      // If no time bars exist, inject them immediately
+      if (!hasExistingTimeBars) {
+        injectTimeBars();
+        lastResetTimes = getCurrentResetTimes();
+        return;
+      }
+
+      // Debounce the check for reset time changes to avoid excessive updates
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (haveResetTimesChanged()) {
           injectTimeBars();
         }
-      }
+      }, 100);
     });
 
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
+      characterData: true
     });
   }
 

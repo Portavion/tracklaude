@@ -7,18 +7,26 @@
 
   let updateIntervalId = null;
 
-  // Parse "Resets in X hr Y min" or "Resets in Y min" format
-  function parseSessionResetTime(text) {
-    const match = text.match(/Resets in (?:(\d+)\s*hr?)?\s*(?:(\d+)\s*min)?/i);
+  // Parse "Resets in Xd Y hr Z min" / "Resets in X hr Y min" / "Resets in Y min" format
+  function parseRelativeResetTime(text) {
+    const match = text.match(/Resets in\s*(?:(\d+)\s*d(?:ays?)?)?\s*(?:(\d+)\s*h(?:rs?|ours?)?)?\s*(?:(\d+)\s*m(?:ins?|inutes?)?)?/i);
     if (!match) return null;
 
-    const hours = parseInt(match[1]) || 0;
-    const minutes = parseInt(match[2]) || 0;
-    return hours * 60 + minutes;
+    const days = parseInt(match[1]) || 0;
+    const hours = parseInt(match[2]) || 0;
+    const minutes = parseInt(match[3]) || 0;
+    return (days * 24 * 60) + (hours * 60) + minutes;
+  }
+
+  function parseSessionResetTime(text) {
+    return parseRelativeResetTime(text);
   }
 
   // Parse "Resets Sat 8:59 AM" or "Resets Tomorrow 8:59 AM" format
   function parseWeeklyResetTime(text) {
+    const relativeMinutes = parseRelativeResetTime(text);
+    if (relativeMinutes !== null) return relativeMinutes;
+
     const dayTimeMatch = text.match(/Resets\s+(\w+)\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     if (!dayTimeMatch) return null;
 
@@ -58,7 +66,7 @@
 
   // Calculate time elapsed percentage and minutes
   function calculateTimeElapsed(remainingMinutes, totalWindowMinutes) {
-    const elapsedMinutes = totalWindowMinutes - remainingMinutes;
+    const elapsedMinutes = Math.max(0, totalWindowMinutes - remainingMinutes);
     const percent = Math.min(100, Math.max(0, (elapsedMinutes / totalWindowMinutes) * 100));
     return { percent, elapsedMinutes };
   }
@@ -109,53 +117,138 @@
     return container;
   }
 
+  function normalizeText(text) {
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
+  function isElementHidden(element) {
+    if (!element) return true;
+    if (element.closest('[aria-hidden="true"]')) return true;
+    const className = typeof element.className === 'string' ? element.className : '';
+    if (className.includes('sr-only')) return true;
+    return false;
+  }
+
+  function classifyLabel(text) {
+    const normalized = normalizeText(text);
+    const lower = normalized.toLowerCase();
+
+    if (lower.includes('current session')) {
+      return { type: 'session', labelText: normalized };
+    }
+
+    if (lower.includes('all models') && normalized.length <= 40) {
+      return { type: 'weekly', labelText: normalized };
+    }
+
+    if (lower.includes('sonnet') && !lower.includes('includes') && normalized.length <= 40) {
+      return { type: 'weekly', labelText: normalized };
+    }
+
+    return null;
+  }
+
+  function findLabelElements() {
+    const results = [];
+    const seen = new Set();
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.textContent;
+      if (!text) continue;
+
+      const info = classifyLabel(text);
+      if (!info) continue;
+
+      const element = node.parentElement;
+      if (!element || isElementHidden(element)) continue;
+      if (seen.has(element)) continue;
+
+      seen.add(element);
+      results.push({ element, type: info.type, labelText: info.labelText });
+    }
+
+    return results;
+  }
+
+  function findTextElement(container, pattern) {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = normalizeText(walker.currentNode.textContent || '');
+      if (pattern.test(text)) {
+        return walker.currentNode.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function findResetTextElement(startElement) {
+    let current = startElement;
+    for (let i = 0; i < 4 && current; i += 1) {
+      const resetEl = findTextElement(current, /^Resets\b/i);
+      if (resetEl) return resetEl;
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  function findRowContainer(labelElement, resetTextElement) {
+    return (
+      labelElement.closest('.w-full.flex.flex-row') ||
+      labelElement.closest('[class*="flex-row"]') ||
+      (resetTextElement && resetTextElement.closest('[class*="flex-row"]')) ||
+      labelElement.closest('[class*="flex"]') ||
+      labelElement.parentElement
+    );
+  }
+
+  function getUsageEntries() {
+    const labels = findLabelElements();
+    const entries = [];
+    const usedRows = new Set();
+
+    labels.forEach(({ element, type, labelText }) => {
+      const resetTextEl = findResetTextElement(element);
+      if (!resetTextEl) return;
+
+      const rowContainer = findRowContainer(element, resetTextEl);
+      if (!rowContainer || usedRows.has(rowContainer)) return;
+
+      usedRows.add(rowContainer);
+
+      entries.push({
+        labelText,
+        type,
+        resetText: normalizeText(resetTextEl.textContent || ''),
+        rowContainer
+      });
+    });
+
+    return entries;
+  }
+
   // Find and process usage bars
   function injectTimeBars() {
     // Remove existing time bars first
     document.querySelectorAll('.claude-ext-time-bar').forEach(el => el.remove());
 
-    // Find all usage bar containers by looking for the label text
-    const allParagraphs = document.querySelectorAll('p');
+    const entries = getUsageEntries();
 
-    allParagraphs.forEach(p => {
-      const text = p.textContent.trim();
+    entries.forEach(entry => {
+      const isSession = entry.type === 'session';
+      const isWeekly = !isSession;
+      const totalWindowMinutes = isSession ? SESSION_WINDOW_MINUTES : WEEKLY_WINDOW_MINUTES;
+      const remainingMinutes = isSession
+        ? parseSessionResetTime(entry.resetText)
+        : parseWeeklyResetTime(entry.resetText);
 
-      if (text === 'Current session' || text === 'All models' || text === 'Sonnet only') {
-        const isSession = text === 'Current session';
-        const isWeekly = text === 'All models' || text === 'Sonnet only';
+      if (remainingMinutes === null) return;
 
-        // Find the parent container (the flex row)
-        const rowContainer = p.closest('.w-full.flex.flex-row');
-        if (!rowContainer) return;
+      const { percent, elapsedMinutes } = calculateTimeElapsed(remainingMinutes, totalWindowMinutes);
+      const timeBar = createTimeBar(percent, elapsedMinutes, isWeekly);
 
-        // Find the reset time text (sibling paragraph)
-        const labelContainer = p.closest('.flex.flex-col');
-        if (!labelContainer) return;
-
-        const resetTextEl = labelContainer.querySelector('p.text-text-400');
-        if (!resetTextEl) return;
-
-        const resetText = resetTextEl.textContent.trim();
-
-        let remainingMinutes;
-        let totalWindowMinutes;
-
-        if (isSession) {
-          remainingMinutes = parseSessionResetTime(resetText);
-          totalWindowMinutes = SESSION_WINDOW_MINUTES;
-        } else {
-          remainingMinutes = parseWeeklyResetTime(resetText);
-          totalWindowMinutes = WEEKLY_WINDOW_MINUTES;
-        }
-
-        if (remainingMinutes === null) return;
-
-        const { percent, elapsedMinutes } = calculateTimeElapsed(remainingMinutes, totalWindowMinutes);
-        const timeBar = createTimeBar(percent, elapsedMinutes, isWeekly);
-
-        // Insert after the row container
-        rowContainer.parentNode.insertBefore(timeBar, rowContainer.nextSibling);
-      }
+      entry.rowContainer.parentNode.insertBefore(timeBar, entry.rowContainer.nextSibling);
     });
   }
 
@@ -165,20 +258,10 @@
   // Get current reset times from the page
   function getCurrentResetTimes() {
     const resetTimes = {};
-    const allParagraphs = document.querySelectorAll('p');
+    const entries = getUsageEntries();
 
-    allParagraphs.forEach(p => {
-      const text = p.textContent.trim();
-
-      if (text === 'Current session' || text === 'All models' || text === 'Sonnet only') {
-        const labelContainer = p.closest('.flex.flex-col');
-        if (!labelContainer) return;
-
-        const resetTextEl = labelContainer.querySelector('p.text-text-400');
-        if (!resetTextEl) return;
-
-        resetTimes[text] = resetTextEl.textContent.trim();
-      }
+    entries.forEach(entry => {
+      resetTimes[entry.labelText] = entry.resetText;
     });
 
     return resetTimes;
@@ -219,7 +302,7 @@
       // Check if we're on the usage page
       if (window.location.pathname !== '/settings/usage') return;
 
-      const hasUsageBars = document.querySelector('p.text-text-100');
+      const hasUsageBars = getUsageEntries().length > 0;
       if (!hasUsageBars) return;
 
       const hasExistingTimeBars = document.querySelector('.claude-ext-time-bar');
